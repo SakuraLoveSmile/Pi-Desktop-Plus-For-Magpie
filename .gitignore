@@ -1,0 +1,26 @@
+# Kept on this computer only: the first analysis, PI-Desktop's source and the
+# other plugins' code we read. Never uploaded.
+_local/
+refs/
+
+# Dependencies and package-manager leftovers (the plugin has none of its own)
+node_modules/
+bun.lock
+bun.lockb
+package-lock.json
+npm-debug.log*
+
+# Scratch and test output
+*.tmp
+*.log
+*.bak
+.playwright-mcp/
+coverage/
+
+# Editors, tools and the operating system
+.vscode/
+.idea/
+.claude/
+.DS_Store
+Thumbs.db
+desktop.ini
