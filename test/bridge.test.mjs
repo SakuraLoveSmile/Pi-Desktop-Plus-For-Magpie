@@ -3,14 +3,14 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import { join } from "node:path"
-import { agent, agentUrl, connect, restingManifest, shortName, ALIAS, MAX_MODELS, PLUGIN_ID, defaultLevel } from "../piapp.agent.js"
+import { agent, agentUrl, connect, restingManifest, shortName, ALIAS, MAX_MODELS, MAX_PROVIDERS, PLUGIN_ID, defaultLevel } from "../piplus.agent.js"
 import { MCP_MARK, SETTLE_MS, dataDir, pathsFor, readRow, serverId, syncMcp, syncOnce, syncRegistry, syncResting, syncSelected, translateMcp } from "../lib/bridge.mjs"
 
 const gateway = { url: "http://127.0.0.1:3425", v1: "http://127.0.0.1:3425/v1", key: "k" }
 const model = (id, extra = {}) => ({ id, name: id.toUpperCase(), context: 200000, output: 8192, images: false, efforts: [], ...extra })
 
 function sandbox() {
-  const root = fs.mkdtempSync(join(os.tmpdir(), "piapp-test-"))
+  const root = fs.mkdtempSync(join(os.tmpdir(), "piplus-test-"))
   const paths = {
     plugin: join(root, "cfg", "plugin"),
     manifest: join(root, "cfg", "plugin", "manifest.json"),
@@ -19,9 +19,9 @@ function sandbox() {
     registry: join(root, "pi", "plugins", "registry.json"),
     servers: join(root, "agents", "servers"),
     selected: join(root, "pkg", "selected.js"),
-    middleware: join(root, "pkg", "piapp.middleware.js"),
+    middleware: join(root, "pkg", "piplus.middleware.js"),
   }
-  // PI-Desktop's data folder: the registry is only written where it exists
+  // Pi-Desktop-Plus's data folder: the registry is only written where it exists
   fs.mkdirSync(join(root, "pi"), { recursive: true })
   const write = (file, value) => {
     fs.mkdirSync(join(file, ".."), { recursive: true })
@@ -44,7 +44,7 @@ test("connect: the alias, named Magpie, comes first with the picked model's limi
   assert.equal(card.id, "magpie")
   assert.equal(card.authKind, "none")
   // the address under which the gateway counts requests as this agent's
-  assert.equal(card.baseUrl, "http://127.0.0.1:3425/agent/pidesktopformagpie/v1")
+  assert.equal(card.baseUrl, "http://127.0.0.1:3425/agent/pidesktopplusformagpie/v1")
   assert.equal(agentUrl({ url: "http://127.0.0.1:3425/" }), card.baseUrl)
   assert.equal(out.magpie.v1, card.baseUrl)
   assert.equal(agent.ua, undefined)
@@ -68,6 +68,18 @@ test("connect: more than 64 models are split into cards, none over the limit", (
   assert.deepEqual(cards.map((c) => c.id), ["magpie", "magpie-2", "magpie-3"])
   assert.ok(cards.every((c) => c.models.length <= MAX_MODELS))
   assert.equal(cards.reduce((n, c) => n + c.models.length, 0), 151)
+})
+
+test("connect: Pi-Desktop-Plus refuses more than 8 cards, so the list is cut there and the pick survives", () => {
+  const models = Array.from({ length: 600 }, (_, i) => model(`v/m${i}`))
+  const cards = connect({ gateway, model: models[599], models }).contributes.providers
+  assert.equal(cards.length, MAX_PROVIDERS)
+  assert.ok(cards.every((c) => c.models.length <= MAX_MODELS))
+  assert.equal(cards.reduce((n, c) => n + c.models.length, 0), MAX_PROVIDERS * MAX_MODELS)
+  // the alias is entry 0 of the first card, so the picked model is never cut
+  assert.equal(cards[0].models[0].id, ALIAS)
+  assert.equal(cards[0].models[0].name, "Magpie")
+  assert.deepEqual(cards.map((c) => c.id), ["magpie", "magpie-2", "magpie-3", "magpie-4", "magpie-5", "magpie-6", "magpie-7", "magpie-8"])
 })
 
 test("connect: without a pick every model is listed, split into cards of at most 64", () => {
@@ -107,7 +119,7 @@ test("selected.js follows the row, and empties when the row is off", async () =>
   assert.match(fs.readFileSync(s.paths.selected, "utf8"), /export const selected = ""\n/)
 })
 
-test("registry: waits while PI-Desktop runs, then adds the row and keeps the others", () => {
+test("registry: waits while Pi-Desktop-Plus runs, then adds the row and keeps the others", () => {
   const s = sandbox()
   const other = { id: "x.theme", name: "T", version: "1", enabled: true, source: "marketplace", status: "ready", permissions: [] }
   s.write(s.paths.registry, [other])
@@ -123,7 +135,7 @@ test("registry: waits while PI-Desktop runs, then adds the row and keeps the oth
   assert.equal(rows[1].path, s.paths.plugin)
   assert.equal(rows[1].status, "ready")
   assert.deepEqual(rows[1].permissions, ["provider.register"])
-  assert.ok(fs.existsSync(`${s.paths.registry}.magpie-piapp.bak`))
+  assert.ok(fs.existsSync(`${s.paths.registry}.magpie-piplus.bak`))
   // nothing to do the second time, so the process list is not even asked
   assert.equal(syncRegistry(s.paths, row, () => assert.fail("asked")), "ok")
 })
@@ -166,42 +178,59 @@ test("registry: a disabled row stays disabled when the manifest changes", () => 
   assert.equal(row.status, "disabled")
 })
 
-test("mcp: magpie's claude file becomes one PI-Desktop file per server", () => {
+test("mcp: magpie's claude file becomes one Pi-Desktop-Plus file per server", () => {
   const { servers, skipped } = translateMcp(
     JSON.stringify({
       mcpServers: {
         playwright: { command: "npx", args: ["@playwright/mcp"], env: { A: "1", B: 2 } },
-        "My Hub!": { type: "http", url: "http://127.0.0.1:3425/mcp/magpie/hub/piapp", headers: { "X-A": "b" } },
+        "My Hub!": { type: "http", url: "http://127.0.0.1:3425/mcp/magpie/hub/piplus", headers: { "X-A": "b" } },
         old: { type: "sse", url: "http://x/sse" },
       },
     }),
   )
   assert.deepEqual(skipped, ["old"])
-  assert.deepEqual(Object.keys(servers), ["magpie-playwright", "magpie-My-Hub"])
-  assert.equal(servers["magpie-playwright"].transport, "stdio")
-  assert.deepEqual(servers["magpie-playwright"].env, { A: "1" })
-  assert.equal(servers["magpie-My-Hub"].transport, "http")
-  assert.equal(servers["magpie-My-Hub"].label, "My Hub!")
-  assert.ok(servers["magpie-My-Hub"].description.startsWith(MCP_MARK))
+  assert.deepEqual(Object.keys(servers), ["magpie-plus-playwright", "magpie-plus-My-Hub"])
+  assert.equal(servers["magpie-plus-playwright"].transport, "stdio")
+  assert.deepEqual(servers["magpie-plus-playwright"].env, { A: "1" })
+  assert.equal(servers["magpie-plus-My-Hub"].transport, "http")
+  assert.equal(servers["magpie-plus-My-Hub"].label, "My Hub!")
+  assert.ok(servers["magpie-plus-My-Hub"].description.startsWith(MCP_MARK))
   assert.ok(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(serverId("  中文 名字 with a very long name ".repeat(5))))
 })
 
 test("mcp: only this package's files are replaced or removed", () => {
   const s = sandbox()
   s.write(join(s.paths.servers, "mine.json"), { id: "mine", label: "mine", transport: "stdio", command: "x" })
-  s.write(join(s.paths.servers, "magpie-taken.json"), { id: "magpie-taken", label: "user's own", transport: "stdio", command: "x" })
+  s.write(join(s.paths.servers, "magpie-plus-taken.json"), { id: "magpie-plus-taken", label: "user's own", transport: "stdio", command: "x" })
   s.write(s.paths.mcp, { mcpServers: { a: { command: "a" }, taken: { command: "t" } } })
   let r = syncMcp(s.paths)
-  assert.deepEqual([r.count, r.written, r.removed, r.blocked], [1, 1, 0, ["magpie-taken"]])
-  assert.equal(s.read(join(s.paths.servers, "magpie-a.json")).command, "a")
-  assert.equal(s.read(join(s.paths.servers, "magpie-taken.json")).label, "user's own")
+  assert.deepEqual([r.count, r.written, r.removed, r.blocked], [1, 1, 0, ["magpie-plus-taken"]])
+  assert.equal(s.read(join(s.paths.servers, "magpie-plus-a.json")).command, "a")
+  assert.equal(s.read(join(s.paths.servers, "magpie-plus-taken.json")).label, "user's own")
   assert.equal(syncMcp(s.paths).written, 0)
   s.write(s.paths.mcp, { mcpServers: { b: { command: "b" } } })
   r = syncMcp(s.paths)
   assert.deepEqual([r.written, r.removed], [1, 1])
   fs.rmSync(s.paths.mcp)
   assert.equal(syncMcp(s.paths).removed, 1)
-  assert.deepEqual(fs.readdirSync(s.paths.servers).sort(), ["magpie-taken.json", "mine.json"])
+  assert.deepEqual(fs.readdirSync(s.paths.servers).sort(), ["magpie-plus-taken.json", "mine.json"])
+})
+
+test("mcp: the PI-Desktop plugin's files in the same folder are left alone", () => {
+  const s = sandbox()
+  // what the PI-Desktop plugin writes: its own prefix and its own mark
+  s.write(join(s.paths.servers, "magpie-a.json"), { id: "magpie-a", label: "a", description: "[magpie-piapp] 由 Magpie 资源库管理，请在 Magpie 里修改。", transport: "stdio", command: "x" })
+  // our prefix, but not our mark: still not ours to touch
+  s.write(join(s.paths.servers, "magpie-plus-b.json"), { id: "magpie-plus-b", label: "b", description: "[magpie-piapp] someone else's", transport: "stdio", command: "x" })
+  s.write(s.paths.mcp, { mcpServers: { a: { command: "a" }, b: { command: "b" } } })
+  const r = syncMcp(s.paths)
+  assert.deepEqual([r.written, r.removed, r.blocked], [1, 0, ["magpie-plus-b"]])
+  assert.equal(s.read(join(s.paths.servers, "magpie-a.json")).command, "x")
+  assert.equal(s.read(join(s.paths.servers, "magpie-plus-b.json")).command, "x")
+  fs.rmSync(s.paths.mcp)
+  // only the file this package wrote goes; the other two stay
+  assert.equal(syncMcp(s.paths).removed, 1)
+  assert.deepEqual(fs.readdirSync(s.paths.servers).sort(), ["magpie-a.json", "magpie-plus-b.json"])
 })
 
 test("syncOnce reports each step and survives a missing everything", () => {
@@ -286,36 +315,36 @@ test("switched off with the resting manifest in place: the registry row goes, th
   assert.deepEqual(s.read(s.paths.registry), [])
 })
 
-test("PI-Desktop's data folder: the override, then where its storage setting moved it, then the default", () => {
-  const home = fs.mkdtempSync(join(os.tmpdir(), "piapp-home-"))
+test("Pi-Desktop-Plus's data folder: the override, then where its storage setting moved it, then the default", () => {
+  const home = fs.mkdtempSync(join(os.tmpdir(), "piplus-home-"))
   const appData = join(home, "AppData", "Roaming")
-  const pointer = join(appData, "PI-Desktop", "storage-location.json")
+  const pointer = join(appData, "Pi-Desktop-Plus", "storage-location.json")
   const moved = join(home, "elsewhere", "data")
-  assert.equal(dataDir({ APPDATA: appData }, home, "win32"), join(home, ".pi-desktop"))
-  fs.mkdirSync(join(appData, "PI-Desktop"), { recursive: true })
+  assert.equal(dataDir({ APPDATA: appData }, home, "win32"), join(home, ".pi-desktop-plus"))
+  fs.mkdirSync(join(appData, "Pi-Desktop-Plus"), { recursive: true })
   fs.writeFileSync(pointer, JSON.stringify({ version: 1, roots: { data: moved, browser: join(home, "elsewhere", "browser") }, backups: [] }))
   assert.equal(dataDir({ APPDATA: appData }, home, "win32"), moved)
   assert.equal(pathsFor({ APPDATA: appData }, home, "win32").registry, join(moved, "plugins", "registry.json"))
   assert.equal(dataDir({ APPDATA: appData, PI_DESKTOP_DATA_DIR: join(home, "explicit") }, home, "win32"), join(home, "explicit"))
   for (const bad of ["not json", "{}", JSON.stringify({ roots: { data: "relative/path" } })]) {
     fs.writeFileSync(pointer, bad)
-    assert.equal(dataDir({ APPDATA: appData }, home, "win32"), join(home, ".pi-desktop"))
+    assert.equal(dataDir({ APPDATA: appData }, home, "win32"), join(home, ".pi-desktop-plus"))
   }
   // the other systems keep the file elsewhere
-  fs.mkdirSync(join(home, "Library", "Application Support", "PI-Desktop"), { recursive: true })
-  fs.writeFileSync(join(home, "Library", "Application Support", "PI-Desktop", "storage-location.json"), JSON.stringify({ roots: { data: moved } }))
+  fs.mkdirSync(join(home, "Library", "Application Support", "Pi-Desktop-Plus"), { recursive: true })
+  fs.writeFileSync(join(home, "Library", "Application Support", "Pi-Desktop-Plus", "storage-location.json"), JSON.stringify({ roots: { data: moved } }))
   assert.equal(dataDir({}, home, "darwin"), moved)
-  assert.equal(dataDir({}, home, "linux"), join(home, ".pi-desktop"))
-  fs.mkdirSync(join(home, "xdg", "PI-Desktop"), { recursive: true })
-  fs.writeFileSync(join(home, "xdg", "PI-Desktop", "storage-location.json"), JSON.stringify({ roots: { data: moved } }))
+  assert.equal(dataDir({}, home, "linux"), join(home, ".pi-desktop-plus"))
+  fs.mkdirSync(join(home, "xdg", "Pi-Desktop-Plus"), { recursive: true })
+  fs.writeFileSync(join(home, "xdg", "Pi-Desktop-Plus", "storage-location.json"), JSON.stringify({ roots: { data: moved } }))
   assert.equal(dataDir({ XDG_CONFIG_HOME: join(home, "xdg") }, home, "linux"), moved)
 })
 
-test("registry: nothing is made where PI-Desktop has no data folder", () => {
+test("registry: nothing is made where Pi-Desktop-Plus has no data folder", () => {
   const s = sandbox()
   fs.rmSync(join(s.root, "pi"), { recursive: true })
   s.connectRow(model("a/one"), [model("a/one")])
-  assert.equal(syncRegistry(s.paths, readRow(s.paths), () => false), "no-pi-desktop")
+  assert.equal(syncRegistry(s.paths, readRow(s.paths), () => false), "no-pi-desktop-plus")
   assert.equal(fs.existsSync(join(s.root, "pi")), false)
   fs.mkdirSync(join(s.root, "pi"))
   assert.equal(syncRegistry(s.paths, readRow(s.paths), () => false), "added")

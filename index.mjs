@@ -2,14 +2,14 @@
 // only keeps lib/bridge.mjs's loop running beside the agent row.
 import { startBridge } from "./lib/bridge.mjs"
 
-const instance = Symbol.for("magpie.piapp.bridge.v1")
+const instance = Symbol.for("magpie.piplus.bridge.v1")
 
 export default async function PiApp(input) {
-  if (process.env.MAGPIE_PIAPP_SKIP_BRIDGE === "1") return {}
+  if (process.env.MAGPIE_PIPLUS_SKIP_BRIDGE === "1") return {}
   if (!globalThis[instance]) {
     const log = (message) => {
       try {
-        void input?.client?.app?.log?.({ body: { service: "piapp", level: "info", message } })?.catch?.(() => {})
+        void input?.client?.app?.log?.({ body: { service: "piplus", level: "info", message } })?.catch?.(() => {})
       } catch {
         // logging is best effort
       }
